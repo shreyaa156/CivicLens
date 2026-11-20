@@ -12,7 +12,7 @@ CivicLens is an agentic, AI-powered civic issue platform for Tier 2 and Tier 3 c
 1. [Quick start](#1-quick-start)
 2. [Connect your Google Gemini API key](#2-connect-your-google-gemini-api-key)
 3. [How the agents work](#3-how-the-agents-work)
-4. [Pages](#4-pages)
+4. [Pages: citizen portal and admin portal](#4-pages-citizen-portal-and-admin-portal)
 5. [Project structure](#5-project-structure)
 6. [Real data only](#6-real-data-only)
 7. [Testing](#7-testing)
@@ -62,6 +62,7 @@ CivicLens uses **only** Google Gemini, through the official `@google/genai` SDK.
    GEMINI_API_KEY=your-key-here
    GEMINI_MODEL=gemini-3.8-flash   # any Gemini model with image input + function calling
    ```
+   If that model is busy or over its quota (HTTP 503/429), use `GEMINI_MODEL=gemini-3.5-flash-lite`, which was verified end to end with this project. The fallback setting below also handles this automatically.
 5. Restart `npm run dev`. The yellow "Development mode" banner disappears, the header shows **Gemini live**, and the server logs `AI provider: Google Gemini API`.
 6. Optional: confirm it works end to end:
    ```bash
@@ -117,14 +118,14 @@ It's one website with two areas. The header menu shows them separately.
 
 | Route | Page |
 |---|---|
-| `/` | Landing page: hero, how it works, the two agents, features, benefits |
+| `/` | Landing page: live figures from real reports (totals, open, resolved, areas, latest AI decision), how it works, the two agents, features |
 | `/report` | Upload a photo, describe it, use browser geolocation or pick on the map, then watch the agents live and see the results |
-| `/map` | Leaflet + OpenStreetMap, priority-coloured clustered markers, category/priority/status/data-source filters, search, duplicate-group lines |
+| `/map` | Leaflet + OpenStreetMap, priority-coloured clustered markers, category/priority/status filters, search, duplicate-group lines; frames itself around real reports |
 | `/dashboard` | **Admin.** KPIs, charts (category, priority, area, 30-day trend), human-review queue, duplicate approval, recent reports, agent activity |
 | `/reports/:id` | Issue details: photo, AI analysis, duplicate evidence, status history, admin actions (status, notes, review flag, duplicates, re-run agents) |
 | `/agents` | **Admin.** Agent Activity: three-lane workflow view and full execution log for every run |
 | `/contact` | Contact form. Messages go to the admin **Messages** inbox |
-| `/messages` | **Admin.** Messages inbox: read, mark read or unread, reply, delete |
+| `/messages` | **Admin.** Messages inbox: read-only list of Contact page messages (unread ones highlighted) |
 
 ## 5. Project structure
 ```
@@ -216,7 +217,7 @@ npm start               # or: npx pm2 start "npm start" --name civiclens && npx 
 - **Scaling note:** SQLite suits a single instance. To run several instances, move to PostgreSQL and object storage for images.
 
 ## 11. Contact messages
-Messages from the public **Contact** page are saved in the database (`contact_messages` table) and shown in the admin portal under **Messages** (`/messages`), protected by `ADMIN_TOKEN`. Admins can read them, mark them read or unread, reply via their own email app (a `mailto:` link) and delete them. The dashboard shows the unread count. No email is sent and no SMTP setup is needed.
+Messages from the public **Contact** page are saved in the database (`contact_messages` table) and shown in the admin portal under **Messages** (`/messages`), protected by `ADMIN_TOKEN`. Admins see a read-only inbox: messages are listed newest first, unread ones are highlighted, and opening one marks it read and shows the sender's name, email, date and full text. The dashboard shows the unread count. No email is sent and no SMTP setup is needed.
 
 ## 12. Troubleshooting
 - **"Cannot reach the CivicLens server"**: the API isn't running on port 4000. Run `npm run dev` from the project root.
