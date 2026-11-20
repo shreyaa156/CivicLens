@@ -9,6 +9,18 @@ import { apiLimiter } from './middleware/security.js';
 import { errorHandler, notFound } from './middleware/errors.js';
 import routes from './routes/index.js';
 
+/** CSP image sources for the configured tile URL ({s} subdomains become a wildcard). */
+export function tileImageSources(tileUrl) {
+  try {
+    const sample = new URL(tileUrl.replace(/{s}/g, 'a').replace(/{[^}]+}/g, '0'));
+    if (!tileUrl.includes('{s}')) return [sample.origin];
+    const host = new URL(tileUrl.replace(/{s}./, '').replace(/{[^}]+}/g, '0')).host;
+    return [`${sample.protocol}//*.${host}`];
+  } catch {
+    return [];
+  }
+}
+
 export function createApp() {
   openDatabase();
   const app = express();
@@ -18,10 +30,13 @@ export function createApp() {
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'same-site' },
+      // Helmet's default is "no-referrer", which strips the Referer from map tile requests.
+      // OpenStreetMap's tile usage policy requires a valid Referer, so send the site origin.
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          imgSrc: ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org', 'https://*.tile.openstreetmap.org'],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https://tile.openstreetmap.org', ...tileImageSources(config.map.tileUrl)],
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
           connectSrc: ["'self'", 'https://nominatim.openstreetmap.org'],

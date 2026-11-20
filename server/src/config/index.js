@@ -101,6 +101,15 @@ export const config = {
 
 
   clientDist: path.join(PROJECT_ROOT, 'client', 'dist'),
+
+  // Map tiles. Defaults to the official OpenStreetMap tile server (light use, attribution required).
+  // Switch providers with env vars only, e.g. CARTO, MapTiler or Stadia (see README).
+  map: {
+    tileUrl: env.MAP_TILE_URL || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attribution: env.MAP_TILE_ATTRIBUTION || '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    subdomains: env.MAP_TILE_SUBDOMAINS || 'abc',
+    maxZoom: num(env.MAP_TILE_MAX_ZOOM, 19),
+  },
 };
 
 /** Resolved AI mode for this process: "gemini" or "development". */

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
-import { MapContainer, TileLayer, Marker, useMap, useMapEvents } from 'react-leaflet';
-import { pinIcon, OSM_TILES } from '../lib/leaflet';
+import BaseTiles from './BaseTiles';
+import { MapContainer, Marker, useMap, useMapEvents } from 'react-leaflet';
+import { pinIcon } from '../lib/leaflet';
 import { DEFAULT_CENTER, DEFAULT_ZOOM } from '../lib/constants';
 
 function ClickHandler({ onPick }) {
@@ -21,7 +22,7 @@ export default function LocationPicker({ position, onChange, className = 'h-72' 
   return (
     <div className={`overflow-hidden rounded-xl border border-slate-200 ${className}`}>
       <MapContainer center={position ? [position.latitude, position.longitude] : DEFAULT_CENTER} zoom={position ? 16 : DEFAULT_ZOOM} className="h-full w-full" scrollWheelZoom>
-        <TileLayer url={OSM_TILES.url} attribution={OSM_TILES.attribution} />
+        <BaseTiles />
         <ClickHandler onPick={onChange} />
         <Recenter position={position} />
         {position && (

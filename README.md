@@ -193,6 +193,7 @@ Everything is documented in [`.env.example`](.env.example). The values you'll mo
 | `DATABASE_PATH` / `UPLOAD_DIR` | `server/data/…` | Persistent storage locations |
 | `DUPLICATE_RADIUS_METERS` | `75` | Suggested duplicate search radius |
 | `REVIEW_CONFIDENCE_THRESHOLD` | `0.6` | Below this, a report goes to human review |
+| `MAP_TILE_URL` / `MAP_TILE_ATTRIBUTION` / `MAP_TILE_SUBDOMAINS` | OpenStreetMap | Map tile provider; switch without code changes (see `.env.example`) |
 
 ## 10. Deployment (standard Node.js hosting)
 CivicLens is a single Node process that serves the API and the built React app. It works on any VPS (DigitalOcean, Lightsail, Hetzner, an Indian cloud provider) or a Node host with a **persistent disk**.
@@ -224,4 +225,5 @@ Messages from the public **Contact** page are saved in the database (`contact_me
 - **Gemini 503 "high demand" or timeouts:** a temporary Google capacity issue. The fallback model handles it automatically; you can also point `GEMINI_MODEL` at a less busy model.
 - **Gemini errors (400 / 403):** check the key and that `GEMINI_MODEL` is available to your account. The run is marked failed and the report goes to manual review; nothing is lost.
 - **Windows "Application Control policy has blocked this file"**: CivicLens deliberately uses Node's built-in `node:sqlite` instead of a native SQLite addon, so this policy doesn't affect it.
+- **Map shows "not following the tile usage policy":** OpenStreetMap requires a Referer header; CivicLens sends one (`Referrer-Policy: strict-origin-when-cross-origin`). If OSM still blocks the domain, switch to another provider with the `MAP_TILE_*` settings (e.g. CARTO, MapTiler or Stadia Maps, each under its own terms).
 - **Location button does nothing:** browsers allow geolocation only on `https://` or `localhost`. Users can always tap the map instead.

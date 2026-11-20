@@ -193,6 +193,23 @@ describe('Public live statistics', () => {
   });
 });
 
+describe('Map tiles (OpenStreetMap usage policy)', () => {
+  it('sends a Referer-friendly Referrer-Policy and exposes a configurable tile provider', async () => {
+    const { tileImageSources } = await import('../src/app.js');
+    const page = await request(app).get('/api/health');
+    const cfg = await request(app).get('/api/config');
+    expect(page.headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
+    expect(page.headers['cache-control'] || '').not.toMatch(/no-cache/);
+    expect(page.headers.pragma).toBeUndefined();
+    expect(cfg.body.map.tileUrl).toBe('https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+    expect(cfg.body.map.attribution).toMatch(/OpenStreetMap/);
+    expect(page.headers['content-security-policy']).toContain('https://tile.openstreetmap.org');
+    // Alternative providers get the right CSP source automatically
+    expect(tileImageSources('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png')).toEqual(['https://*.basemaps.cartocdn.com']);
+    expect(tileImageSources('https://api.maptiler.com/maps/streets-v2/{z}/{x}/{y}.png?key=abc')).toEqual(['https://api.maptiler.com']);
+  });
+});
+
 describe('Security basics', () => {
   it('CORS: blocks unknown origins on the API, allows same-origin and configured origins', async () => {
     const evil = await request(app).get('/api/health').set('Origin', 'https://evil.example');

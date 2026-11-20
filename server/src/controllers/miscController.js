@@ -22,6 +22,7 @@ export function publicConfig(req, res) {
     departments: DEPARTMENT_NAMES,
     duplicateRadiusMeters: config.duplicates.defaultRadiusMeters,
     maxUploadMb: Math.round(config.maxUploadBytes / 1048576),
+    map: config.map,
   });
 }
 

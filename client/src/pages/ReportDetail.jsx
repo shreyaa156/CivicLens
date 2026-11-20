@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
+import BaseTiles from '../components/BaseTiles';
 import { Link, useParams } from 'react-router-dom';
-import { MapContainer, TileLayer, Marker } from 'react-leaflet';
+import { MapContainer, Marker } from 'react-leaflet';
 import { ArrowLeft, MapPin, Clock, History, StickyNote, ShieldAlert, ShieldCheck, RefreshCw, Workflow, Check, X, Loader2, Lock } from 'lucide-react';
 import { api, errorMessage, isUnauthorized } from '../lib/api';
 import { STATUS, formatDate, statusLabel } from '../lib/constants';
-import { markerIcon, OSM_TILES } from '../lib/leaflet';
+import { markerIcon } from '../lib/leaflet';
 import AnalysisPanel from '../components/AnalysisPanel';
 import { RunStatus } from '../components/AgentWorkflow';
 import { Alert, DemoBadge, PriorityBadge, Spinner, StatusBadge, EmptyState } from '../components/ui';
@@ -166,7 +167,7 @@ export default function ReportDetail() {
 
           <div className="card h-56 overflow-hidden">
             <MapContainer center={[report.latitude, report.longitude]} zoom={16} className="h-full w-full" scrollWheelZoom={false}>
-              <TileLayer url={OSM_TILES.url} attribution={OSM_TILES.attribution} />
+              <BaseTiles />
               <Marker position={[report.latitude, report.longitude]} icon={markerIcon(report.priority, { size: 22 })} />
             </MapContainer>
           </div>

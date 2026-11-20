@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import BaseTiles from '../components/BaseTiles';
 import { Link } from 'react-router-dom';
-import { MapContainer, TileLayer, Polyline, Tooltip, useMap } from 'react-leaflet';
+import { MapContainer, Polyline, Tooltip, useMap } from 'react-leaflet';
 import { Search, SlidersHorizontal, X, MapPin, ExternalLink, Copy, Layers } from 'lucide-react';
 import { api, errorMessage } from '../lib/api';
 import { CATEGORY, PRIORITY, PRIORITY_ORDER, STATUS, DEFAULT_CENTER, DEFAULT_ZOOM, categoryLabel, timeAgo, UNASSIGNED_COLOR } from '../lib/constants';
-import L, { OSM_TILES } from '../lib/leaflet';
+import L from '../lib/leaflet';
 import ClusterLayer from '../components/ClusterLayer';
 import { Alert, CategoryChip, DemoBadge, PriorityBadge, StatusBadge, Spinner, cx } from '../components/ui';
 
@@ -149,7 +150,7 @@ export default function MapPage() {
             )}
             <MapContainer center={DEFAULT_CENTER} zoom={DEFAULT_ZOOM} className="h-full w-full" scrollWheelZoom>
               <FitToReports reports={reports} />
-              <TileLayer url={OSM_TILES.url} attribution={OSM_TILES.attribution} />
+              <BaseTiles />
               <ClusterLayer reports={filtered} onSelect={onSelect} selectedId={selected?.id} />
               {showDupes &&
                 dupLines.map((l) => (
