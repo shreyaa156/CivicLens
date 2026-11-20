@@ -1,0 +1,100 @@
+@import 'tailwindcss';
+@import 'leaflet/dist/leaflet.css';
+@import 'leaflet.markercluster/dist/MarkerCluster.css';
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --color-brand-50: #eff6ff;
+  --color-brand-100: #dbeafe;
+  --color-brand-200: #bfdbfe;
+  --color-brand-500: #3b82f6;
+  --color-brand-600: #2563eb;
+  --color-brand-700: #1d4ed8;
+  --color-brand-900: #1e3a8a;
+
+  --color-civic-50: #ecfdf5;
+  --color-civic-100: #d1fae5;
+  --color-civic-500: #10b981;
+  --color-civic-600: #059669;
+  --color-civic-700: #047857;
+
+  --color-ink: #0f172a;
+  --color-canvas: #f6f8fb;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 16px -4px rgb(15 23 42 / 0.08);
+  --shadow-lift: 0 10px 40px -12px rgb(37 99 235 / 0.35);
+
+  --animate-fade-up: fade-up 0.5s ease-out both;
+  --animate-pulse-ring: pulse-ring 1.6s ease-out infinite;
+
+  @keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse-ring {
+    0% { box-shadow: 0 0 0 0 rgb(37 99 235 / 0.45); }
+    100% { box-shadow: 0 0 0 12px rgb(37 99 235 / 0); }
+  }
+}
+
+@layer base {
+  html { scroll-behavior: smooth; }
+  body {
+    @apply bg-canvas text-ink antialiased;
+  }
+  h1, h2, h3, h4 { @apply tracking-tight; }
+  :focus-visible { @apply outline-2 outline-offset-2 outline-brand-500; }
+}
+
+@utility container-page {
+  @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+}
+@utility card {
+  @apply rounded-2xl border border-slate-200/80 bg-white shadow-card;
+}
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-150 disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility btn-primary {
+  @apply btn bg-brand-600 text-white shadow-sm hover:bg-brand-700 hover:shadow-lift active:scale-[0.98];
+}
+@utility btn-green {
+  @apply btn bg-civic-600 text-white shadow-sm hover:bg-civic-700 active:scale-[0.98];
+}
+@utility btn-secondary {
+  @apply btn border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:bg-slate-50;
+}
+@utility btn-ghost {
+  @apply btn text-slate-600 hover:bg-slate-100;
+}
+@utility btn-danger {
+  @apply btn border border-red-200 bg-white text-red-600 hover:bg-red-50;
+}
+@utility input {
+  @apply w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-ink placeholder:text-slate-400 transition focus:border-brand-500 focus:ring-4 focus:ring-brand-100 focus:outline-none;
+}
+@utility label {
+  @apply mb-1.5 block text-sm font-semibold text-slate-700;
+}
+@utility eyebrow {
+  @apply text-xs font-bold tracking-[0.14em] text-brand-600 uppercase;
+}
+
+/* Leaflet tweaks */
+.leaflet-container { font-family: var(--font-sans); border-radius: inherit; }
+.leaflet-popup-content-wrapper { border-radius: 14px; box-shadow: var(--shadow-card); }
+.leaflet-popup-content { margin: 12px 14px; }
+.cl-marker { border-radius: 9999px; border: 3px solid white; box-shadow: 0 2px 6px rgb(0 0 0 / 0.35); }
+.marker-cluster-small, .marker-cluster-medium, .marker-cluster-large { background-color: rgb(37 99 235 / 0.25); }
+.marker-cluster-small div, .marker-cluster-medium div, .marker-cluster-large div {
+  background-color: #2563eb; color: white; font-weight: 700;
+}
+.marker-cluster { background-clip: padding-box; border-radius: 20px; }
+.marker-cluster div { width: 30px; height: 30px; margin-left: 5px; margin-top: 5px; text-align: center; border-radius: 15px; font-size: 12px; }
+.marker-cluster span { line-height: 30px; }
+
+/* Recharts: no focus box when a chart is clicked (keyboard focus still visible via :focus-visible). */
+.recharts-wrapper:focus:not(:focus-visible),
+.recharts-surface:focus:not(:focus-visible),
+.recharts-wrapper *:focus:not(:focus-visible) { outline: none; }

@@ -1,0 +1,24 @@
+{
+  "name": "civiclens",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CivicLens — agentic AI-powered civic issue intelligence platform (React + Express + Google Gemini)",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "install:all": "npm install && npm install --prefix server && npm install --prefix client",
+    "dev": "concurrently -n api,web -c blue,green \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "build": "npm run build --prefix client",
+    "start": "npm start --prefix server",
+    "test": "npm test --prefix server",
+    "test:report": "npm run test:report --prefix server",
+    "test:e2e": "playwright test",
+    "smoke:gemini": "npm run smoke:gemini --prefix server"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "concurrently": "^10.0.7"
+  }
+}
