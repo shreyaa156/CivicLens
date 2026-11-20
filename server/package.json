@@ -4,7 +4,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/index.js",
-    "dev": "node --disable-warning=ExperimentalWarning --watch-path=./src --watch-path=../.env src/index.js",
+    "dev": "node scripts/dev.js",
     "test": "vitest run",
     "test:report": "vitest run && node scripts/build-test-report.js",
     "smoke:gemini": "node --disable-warning=ExperimentalWarning scripts/gemini-smoke-test.js"
