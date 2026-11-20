@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-const API = process.env.VITE_API_PROXY || 'http://localhost:4000';
+const API = process.env.VITE_API_PROXY || 'http://127.0.0.1:4000';
 
 export default defineConfig(({ mode }) => {
   // Vite only reads client/.env* and only exposes VITE_-prefixed variables to the browser bundle.

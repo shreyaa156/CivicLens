@@ -50,6 +50,8 @@ export const config = {
   isProduction: nodeEnv === 'production',
   isTest: nodeEnv === 'test' || env.VITEST === 'true',
   port: num(env.PORT, 4000),
+  // Bind on all interfaces so container/proxy health checks can reach the app.
+  host: env.HOST || '0.0.0.0',
 
   // AI (Google Gemini only)
   gemini: {

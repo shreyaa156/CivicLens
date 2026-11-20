@@ -13,7 +13,7 @@ export default defineConfig({
   retries: 0,
   reporter: [['list']],
   use: {
-    baseURL: process.env.E2E_BASE_URL || `http://localhost:${PORT}`,
+    baseURL: process.env.E2E_BASE_URL || `http://127.0.0.1:${PORT}`,
     screenshot: 'only-on-failure',
     geolocation: { latitude: 19.9975, longitude: 73.7898 }, // Nashik
     permissions: ['geolocation'],
@@ -26,7 +26,7 @@ export default defineConfig({
     ? undefined
     : {
         command: 'npm run build && npm start',
-        url: `http://localhost:${PORT}/api/health`,
+        url: `http://127.0.0.1:${PORT}/api/health`,
         reuseExistingServer: false,
         timeout: 120000,
         env: {

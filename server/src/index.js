@@ -5,8 +5,8 @@ import { describeAiMode } from './ai/modelClient.js';
 const app = createApp();
 
 const ai = describeAiMode();
-app.listen(config.port, () => {
-  console.log(`\n  CivicLens API running on http://localhost:${config.port}`);
+app.listen(config.port, config.host, () => {
+  console.log(`\n  CivicLens listening on ${config.host}:${config.port} (locally: http://localhost:${config.port})`);
   console.log(`  Environment: ${config.nodeEnv}`);
   console.log(`  Env file(s): ${loadedEnvFiles.length ? loadedEnvFiles.join(', ') : `none found (expected ${ROOT_ENV_FILE})`}`);
   console.log(`  AI provider: ${ai.provider}${ai.mode === 'gemini' ? ` (model ${ai.model})` : ''}`);
