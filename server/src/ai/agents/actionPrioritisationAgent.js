@@ -88,9 +88,9 @@ export async function runActionPrioritisationAgent({ client, input, log }) {
     },
     get_area_backlog: {
       declaration: declarations.get_area_backlog,
-      handler: ({ radius_m }) => {
+      handler: async ({ radius_m }) => {
         const radius = Math.min(Math.max(Number(radius_m) || 500, 50), 2000);
-        const rows = findNearbyReports({ latitude: report.latitude, longitude: report.longitude, radiusM: radius, excludeId: report.id }).filter((r) =>
+        const rows = (await findNearbyReports({ latitude: report.latitude, longitude: report.longitude, radiusM: radius, excludeId: report.id })).filter((r) =>
           OPEN_STATUSES.includes(r.status),
         );
         const byCategory = {};

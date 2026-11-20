@@ -126,7 +126,7 @@ describe('Agent 1 — Civic Issue Intelligence', () => {
     await submit({ client: mockGemini({ findings: baseFindings(), assessment: baseAssessment() }), image: photo, ...loc });
     const client = mockGemini({ findings: baseFindings(), assessment: baseAssessment() });
     const res = await submit({ client, image: photo, latitude: loc.latitude + 0.003, longitude: loc.longitude });
-    const run = getRun(res.body.runId);
+    const run = await getRun(res.body.runId);
     const search = run.steps.find((s) => s.step === 'tool_result:search_nearby_reports');
     r.actual = `nearby found=${search.data.count} within ${search.data.radius_m} m; duplicates=${res.body.report.duplicates.length}`;
     expect(search.data.count).toBe(0);
@@ -137,7 +137,7 @@ describe('Agent 1 — Civic Issue Intelligence', () => {
     const r = record({ id: 'TC19', scenario: 'Agent claims a duplicate the database never returned', input: 'Gemini submit_findings lists report_id 99999 as a duplicate without it being retrieved', expected: 'Orchestrator discards the claim; no link stored; validation warning logged' });
     const client = mockGemini({ findings: baseFindings({ duplicates: [{ report_id: 99999, likelihood: 'likely', reason: 'Invented' }] }), assessment: baseAssessment() });
     const res = await submit({ client, ...freshLocation() });
-    const run = getRun(res.body.runId);
+    const run = await getRun(res.body.runId);
     const warn = run.steps.find((s) => s.step === 'validation' && s.status === 'warning');
     r.actual = `links=${res.body.report.duplicates.length}, warning="${warn?.message}"`;
     expect(res.body.report.duplicates).toHaveLength(0);
@@ -157,7 +157,7 @@ describe('Agent 2 — Civic Action & Prioritisation', () => {
       },
     });
     const res = await submit({ client, description: 'Deep pothole near school gate', ...freshLocation() });
-    const run = getRun(res.body.runId);
+    const run = await getRun(res.body.runId);
     const policy = run.steps.some((s) => s.step === 'tool_result:get_priority_policy');
     r.actual = `handoff severity=${handoff.agent1_findings.severity}, hazards=${handoff.agent1_findings.safety_hazards.length}; priority=${res.body.report.priority}; policyConsulted=${policy}`;
     expect(handoff.agent1_findings.severity).toBe('high');
@@ -179,7 +179,7 @@ describe('Agent 2 — Civic Action & Prioritisation', () => {
       client: mockGemini({ findings: baseFindings({ category: 'open_drain', severity: 'critical' }), assessment: baseAssessment({ priority: 'Medium', department: 'Drainage' }) }),
       ...freshLocation(),
     });
-    const bRun = getRun(b.body.runId);
+    const bRun = await getRun(b.body.runId);
     const guard = bRun.steps.find((s) => s.step === 'guardrail');
     r.actual = `(a) priority=${a.body.report.priority}, review=${a.body.report.needs_human_review}; (b) priority=${b.body.report.priority}, guardrail="${guard?.message}"`;
     expect(a.body.report.priority).toBe('Critical');

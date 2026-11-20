@@ -15,7 +15,8 @@
     "test": "npm test --prefix server",
     "test:report": "npm run test:report --prefix server",
     "test:e2e": "playwright test",
-    "smoke:gemini": "npm run smoke:gemini --prefix server"
+    "smoke:gemini": "npm run smoke:gemini --prefix server",
+    "db:migrate": "cd server && npm run db:migrate --"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",

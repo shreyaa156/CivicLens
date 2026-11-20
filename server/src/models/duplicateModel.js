@@ -1,14 +1,15 @@
-import { getDb, clean, nowIso } from '../db/index.js';
+import { all, get, run, nowIso, dialect } from '../db/index.js';
 
-export function upsertDuplicateLink({ reportId, candidateId, distanceM, imageSimilarity, textSimilarity, likelihood, reason }) {
-  getDb()
-    .prepare(
-      `INSERT INTO duplicate_links (report_id, candidate_report_id, distance_m, image_similarity, text_similarity, likelihood, reason)
-       VALUES (:rid, :cid, :dist, :img, :txt, :lik, :reason)
-       ON CONFLICT(report_id, candidate_report_id) DO UPDATE SET distance_m = excluded.distance_m, image_similarity = excluded.image_similarity,
-         text_similarity = excluded.text_similarity, likelihood = excluded.likelihood, reason = excluded.reason`,
-    )
-    .run(clean({ rid: reportId, cid: candidateId, dist: distanceM, img: imageSimilarity, txt: textSimilarity, lik: likelihood, reason }));
+export async function upsertDuplicateLink({ reportId, candidateId, distanceM, imageSimilarity, textSimilarity, likelihood, reason }) {
+  const insert = `INSERT INTO duplicate_links (report_id, candidate_report_id, distance_m, image_similarity, text_similarity, likelihood, reason, created_at)
+       VALUES (:rid, :cid, :dist, :img, :txt, :lik, :reason, :ts)`;
+  const upsert =
+    dialect() === 'mysql'
+      ? `${insert} ON DUPLICATE KEY UPDATE distance_m = VALUES(distance_m), image_similarity = VALUES(image_similarity),
+           text_similarity = VALUES(text_similarity), likelihood = VALUES(likelihood), reason = VALUES(reason)`
+      : `${insert} ON CONFLICT(report_id, candidate_report_id) DO UPDATE SET distance_m = excluded.distance_m, image_similarity = excluded.image_similarity,
+           text_similarity = excluded.text_similarity, likelihood = excluded.likelihood, reason = excluded.reason`;
+  await run(upsert, { rid: reportId, cid: candidateId, dist: distanceM, img: imageSimilarity, txt: textSimilarity, lik: likelihood, reason, ts: nowIso() });
 }
 
 const LINK_SELECT = `
@@ -18,38 +19,35 @@ const LINK_SELECT = `
   FROM duplicate_links d JOIN reports r ON r.id = d.candidate_report_id`;
 
 /** Links where this report is the newer report (it points to older candidates). */
-export function getDuplicatesForReport(reportId) {
-  return getDb().prepare(`${LINK_SELECT} WHERE d.report_id = ? ORDER BY d.distance_m`).all(reportId);
+export async function getDuplicatesForReport(reportId) {
+  return all(`${LINK_SELECT} WHERE d.report_id = ? ORDER BY d.distance_m`, [reportId]);
 }
 
 /** Links where a newer report points at this one. */
-export function getReportsDuplicatingThis(reportId) {
-  return getDb()
-    .prepare(
-      `SELECT d.*, r.reference AS source_reference, r.category AS source_category, r.created_at AS source_created_at
-       FROM duplicate_links d JOIN reports r ON r.id = d.report_id WHERE d.candidate_report_id = ? ORDER BY d.created_at DESC`,
-    )
-    .all(reportId);
+export async function getReportsDuplicatingThis(reportId) {
+  return all(
+    `SELECT d.*, r.reference AS source_reference, r.category AS source_category, r.created_at AS source_created_at
+     FROM duplicate_links d JOIN reports r ON r.id = d.report_id WHERE d.candidate_report_id = ? ORDER BY d.created_at DESC`,
+    [reportId],
+  );
 }
 
 /** Duplicate groups: one group per report that has suggested/approved links. */
-export function listDuplicateGroups({ status } = {}) {
-  const db = getDb();
+export async function listDuplicateGroups({ status } = {}) {
   const params = {};
   let filter = '';
   if (status) {
     filter = 'WHERE d.status = :status';
     params.status = status;
   }
-  const links = db
-    .prepare(
-      `SELECT d.*, s.reference AS source_reference, s.category AS source_category, s.latitude AS source_lat, s.longitude AS source_lon,
-              s.priority AS source_priority, s.is_demo AS source_is_demo,
-              c.reference AS candidate_reference, c.category AS candidate_category, c.latitude AS candidate_lat, c.longitude AS candidate_lon
-       FROM duplicate_links d JOIN reports s ON s.id = d.report_id JOIN reports c ON c.id = d.candidate_report_id ${filter}
-       ORDER BY d.created_at DESC`,
-    )
-    .all(params);
+  const links = await all(
+    `SELECT d.*, s.reference AS source_reference, s.category AS source_category, s.latitude AS source_lat, s.longitude AS source_lon,
+            s.priority AS source_priority, s.is_demo AS source_is_demo,
+            c.reference AS candidate_reference, c.category AS candidate_category, c.latitude AS candidate_lat, c.longitude AS candidate_lon
+     FROM duplicate_links d JOIN reports s ON s.id = d.report_id JOIN reports c ON c.id = d.candidate_report_id ${filter}
+     ORDER BY d.created_at DESC`,
+    params,
+  );
   const groups = new Map();
   for (const l of links) {
     if (!groups.has(l.report_id)) {
@@ -69,18 +67,18 @@ export function listDuplicateGroups({ status } = {}) {
   return [...groups.values()];
 }
 
-export function getLink(id) {
-  return getDb().prepare('SELECT * FROM duplicate_links WHERE id = ?').get(id);
+export async function getLink(id) {
+  return get('SELECT * FROM duplicate_links WHERE id = ?', [id]);
 }
 
-export function reviewLinks(reportId, decision, note, linkIds) {
-  const db = getDb();
+export async function reviewLinks(reportId, decision, note, linkIds) {
   const ts = nowIso();
   if (linkIds?.length) {
-    const stmt = db.prepare('UPDATE duplicate_links SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ? AND report_id = ?');
-    for (const lid of linkIds) stmt.run(decision, note || null, ts, lid, reportId);
+    for (const lid of linkIds) {
+      await run('UPDATE duplicate_links SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ? AND report_id = ?', [decision, note || null, ts, lid, reportId]);
+    }
   } else {
-    db.prepare('UPDATE duplicate_links SET status = ?, review_note = ?, reviewed_at = ? WHERE report_id = ?').run(decision, note || null, ts, reportId);
+    await run('UPDATE duplicate_links SET status = ?, review_note = ?, reviewed_at = ? WHERE report_id = ?', [decision, note || null, ts, reportId]);
   }
   return getDuplicatesForReport(reportId);
 }

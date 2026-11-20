@@ -4,13 +4,13 @@ import path from 'node:path';
 import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { config } from '../src/config/index.js';
-import { getDb } from '../src/db/index.js';
+import { get, run } from '../src/db/index.js';
 import { setModelClientFactory } from '../src/ai/modelClient.js';
 import { getRun } from '../src/models/agentModel.js';
 import { record, makeImage, mockGemini, baseFindings, baseAssessment } from './helpers.js';
 
 let app;
-const count = () => getDb().prepare('SELECT COUNT(*) c FROM reports').get().c;
+const count = async () => Number((await get('SELECT COUNT(*) AS c FROM reports')).c);
 
 beforeAll(() => {
   app = createApp();
@@ -33,19 +33,19 @@ async function createReport(lat = 21.1, lon = 79.08, client) {
 describe('Report submission & validation', () => {
   it('TC11 missing location handling', async () => {
     const r = record({ id: 'TC11', scenario: 'Missing location handling', input: 'Valid photo, no latitude/longitude', expected: 'HTTP 400 LOCATION_REQUIRED; nothing stored' });
-    const before = count();
+    const before = await count();
     const res = await request(app).post('/api/reports').field('description', 'x').attach('image', await makeImage(), { filename: 'a.jpg', contentType: 'image/jpeg' });
     const partial = await request(app).post('/api/reports').field('latitude', '20.1').attach('image', await makeImage(), { filename: 'a.jpg', contentType: 'image/jpeg' });
-    r.actual = `HTTP ${res.status} ${res.body.error?.code}; lat-only → HTTP ${partial.status}; reports stored: ${count() - before}`;
+    r.actual = `HTTP ${res.status} ${res.body.error?.code}; lat-only → HTTP ${partial.status}; reports stored: ${(await count()) - before}`;
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe('LOCATION_REQUIRED');
     expect(partial.status).toBe(400);
-    expect(count()).toBe(before);
+    expect(await count()).toBe(before);
   });
 
   it('TC12 invalid image rejection', async () => {
     const r = record({ id: 'TC12', scenario: 'Invalid image rejection', input: '(a) text file disguised as image/jpeg, (b) PDF mimetype, (c) 9 MB file, (d) no image', expected: '(a) 415 (b) 415 (c) 413 (d) 400; nothing stored' });
-    const before = count();
+    const before = await count();
     const send = (buf, name, type) => request(app).post('/api/reports').field('latitude', '20').field('longitude', '73').attach('image', buf, { filename: name, contentType: type });
     const a = await send(Buffer.from('this is not really an image at all, just text'), 'fake.jpg', 'image/jpeg');
     const b = await send(Buffer.from('%PDF-1.4 ...'), 'doc.pdf', 'application/pdf');
@@ -53,19 +53,19 @@ describe('Report submission & validation', () => {
     big[0] = 0xff; big[1] = 0xd8; big[2] = 0xff;
     const c = await send(big, 'big.jpg', 'image/jpeg');
     const d = await request(app).post('/api/reports').field('latitude', '20').field('longitude', '73');
-    r.actual = `(a) ${a.status} ${a.body.error?.code} (b) ${b.status} (c) ${c.status} (d) ${d.status} ${d.body.error?.code}; stored ${count() - before}`;
+    r.actual = `(a) ${a.status} ${a.body.error?.code} (b) ${b.status} (c) ${c.status} (d) ${d.status} ${d.body.error?.code}; stored ${(await count()) - before}`;
     expect(a.status).toBe(415);
     expect(b.status).toBe(415);
     expect(c.status).toBe(413);
     expect(d.status).toBe(400);
-    expect(count()).toBe(before);
+    expect(await count()).toBe(before);
   });
 
   it('TC13 successful report submission (end-to-end, development mode)', async () => {
     const r = record({ id: 'TC13', scenario: 'Successful report submission', input: 'Valid JPEG + description + coordinates via POST /api/reports (dev-mode agents)', expected: '201; reference CL-xxxx; image stored & EXIF-stripped JPEG; run completed with all agent milestones; report listed' });
     const res = await createReport(21.15, 79.09);
     const rep = res.body.report;
-    const run = getRun(res.body.runId);
+    const run = await getRun(res.body.runId);
     const steps = new Set(run.steps.map((s) => s.step));
     const milestones = ['workflow_started', 'image_received', 'issue_identified', 'tool_result:search_nearby_reports', 'duplicates_completed', 'risk_assessment_started', 'priority_assigned', 'department_recommended', 'action_suggested', 'final_decision'];
     const missing = milestones.filter((m) => !steps.has(m));
@@ -87,8 +87,8 @@ describe('Report submission & validation', () => {
     expect(res.status).toBe(202);
     expect(res.body.runId).toBeTypeOf('number');
     // wait for background completion so the run isn't left dangling
-    for (let i = 0; i < 50 && getRun(res.body.runId).status === 'running'; i++) await new Promise((r) => setTimeout(r, 20));
-    expect(getRun(res.body.runId).status).toBe('completed');
+    for (let i = 0; i < 50 && (await getRun(res.body.runId)).status === 'running'; i++) await new Promise((r) => setTimeout(r, 20));
+    expect((await getRun(res.body.runId)).status).toBe('completed');
   });
 });
 
@@ -171,16 +171,16 @@ describe('Contact form → admin Messages inbox', () => {
 describe('Public live statistics', () => {
   it('TC21 public stats are computed from genuine reports only', async () => {
     const r = record({ id: 'TC21', scenario: 'Live public statistics from real data', input: 'Real reports in the DB plus one legacy is_demo row inserted directly', expected: 'Totals equal the count of genuine reports; legacy demo row ignored; latest decision comes from a real agent run' });
-    const db = getDb();
-    db.prepare(`INSERT INTO reports (reference, latitude, longitude, is_demo, status) VALUES ('DEMO-X', 1, 1, 1, 'submitted')`).run();
-    const genuine = db.prepare('SELECT COUNT(*) c FROM reports WHERE is_demo = 0').get().c;
+    const ts = new Date().toISOString();
+    await run(`INSERT INTO reports (reference, citizen_description, latitude, longitude, is_demo, review_reasons, status, created_at, updated_at) VALUES ('DEMO-X', '', 1, 1, 1, '[]', 'submitted', ?, ?)`, [ts, ts]);
+    const genuine = Number((await get('SELECT COUNT(*) AS c FROM reports WHERE is_demo = 0')).c);
     const res = await request(app).get('/api/stats/public');
-    const latestRun = db.prepare(`SELECT r.reference FROM agent_runs a JOIN reports r ON r.id = a.report_id WHERE a.status = 'completed' AND r.is_demo = 0 ORDER BY a.id DESC LIMIT 1`).get();
+    const latestRun = await get(`SELECT r.reference FROM agent_runs a JOIN reports r ON r.id = a.report_id WHERE a.status = 'completed' AND r.is_demo = 0 ORDER BY a.id DESC LIMIT 1`);
     r.actual = `total=${res.body.totals.total} (genuine in DB=${genuine}), latest decision=${res.body.latestDecision?.reference} (latest real run=${latestRun?.reference})`;
     expect(res.status).toBe(200);
     expect(res.body.totals.total).toBe(genuine);
     expect(res.body.latestDecision?.reference).toBe(latestRun?.reference);
-    db.prepare(`DELETE FROM reports WHERE reference = 'DEMO-X'`).run();
+    await run(`DELETE FROM reports WHERE reference = 'DEMO-X'`);
   });
 
   it('agent run list is admin-only while a single run stays readable for live progress', async () => {

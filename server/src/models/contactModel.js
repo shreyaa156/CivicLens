@@ -1,36 +1,36 @@
-import { getDb, clean, nowIso } from '../db/index.js';
+import { all, get, run, nowIso } from '../db/index.js';
 
 const COLUMNS = 'id, name, email, subject, message, read_at, created_at';
 const mapMessage = (m) => m && { ...m, is_read: !!m.read_at };
 
-export function saveContactMessage({ name, email, subject, message }) {
-  const info = getDb()
-    .prepare(`INSERT INTO contact_messages (name, email, subject, message, delivery_status) VALUES (:name, :email, :subject, :message, 'stored')`)
-    .run(clean({ name, email, subject, message }));
-  return Number(info.lastInsertRowid);
+export async function saveContactMessage({ name, email, subject, message }) {
+  const { insertId } = await run(
+    `INSERT INTO contact_messages (name, email, subject, message, delivery_status, created_at) VALUES (:name, :email, :subject, :message, 'stored', :ts)`,
+    { name, email, subject, message, ts: nowIso() },
+  );
+  return insertId;
 }
 
-export function listMessages({ filter = 'all', limit = 200 } = {}) {
+export async function listMessages({ filter = 'all', limit = 200 } = {}) {
   const where = filter === 'unread' ? 'WHERE read_at IS NULL' : filter === 'read' ? 'WHERE read_at IS NOT NULL' : '';
-  return getDb()
-    .prepare(`SELECT ${COLUMNS} FROM contact_messages ${where} ORDER BY id DESC LIMIT ?`)
-    .all(Math.min(Number(limit) || 200, 500))
-    .map(mapMessage);
+  const lim = Math.min(Number(limit) || 200, 500);
+  return (await all(`SELECT ${COLUMNS} FROM contact_messages ${where} ORDER BY id DESC LIMIT ${lim}`)).map(mapMessage);
 }
 
-export function getMessage(id) {
-  return mapMessage(getDb().prepare(`SELECT ${COLUMNS} FROM contact_messages WHERE id = ?`).get(id));
+export async function getMessage(id) {
+  return mapMessage(await get(`SELECT ${COLUMNS} FROM contact_messages WHERE id = ?`, [id]));
 }
 
-export function setMessageRead(id, read) {
-  getDb().prepare('UPDATE contact_messages SET read_at = ? WHERE id = ?').run(read ? nowIso() : null, id);
+export async function setMessageRead(id, read) {
+  await run('UPDATE contact_messages SET read_at = ? WHERE id = ?', [read ? nowIso() : null, id]);
   return getMessage(id);
 }
 
-export function deleteMessage(id) {
-  return getDb().prepare('DELETE FROM contact_messages WHERE id = ?').run(id).changes > 0;
+export async function deleteMessage(id) {
+  return (await run('DELETE FROM contact_messages WHERE id = ?', [id])).changes > 0;
 }
 
-export function messageCounts() {
-  return getDb().prepare('SELECT COUNT(*) total, COALESCE(SUM(read_at IS NULL), 0) unread FROM contact_messages').get();
+export async function messageCounts() {
+  const row = await get('SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END), 0) AS unread FROM contact_messages');
+  return { total: Number(row.total), unread: Number(row.unread) };
 }

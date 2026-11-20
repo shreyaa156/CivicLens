@@ -1,202 +1,183 @@
+/**
+ * Database access layer (async) with two drivers:
+ *  - MySQL  (production, e.g. GoDaddy Hosted MySQL) when DB_HOST is set: mysql2/promise connection pool.
+ *  - SQLite (local development and automated tests) otherwise: Node's built-in node:sqlite.
+ * Override with DB_CLIENT=mysql|sqlite.
+ *
+ * API: all(sql, params) · get(sql, params) · run(sql, params) → { insertId, changes } · transaction(fn)
+ * Params are either an object for :named placeholders or an array for ? placeholders.
+ * SQL used by the models is written to run unchanged on both databases.
+ */
 import fs from 'node:fs';
 import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { config } from '../config/index.js';
+import { SQLITE_SCHEMA, MYSQL_SCHEMA } from './schema.js';
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS reports (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  reference TEXT NOT NULL UNIQUE,
-  citizen_description TEXT NOT NULL DEFAULT '',
-  latitude REAL NOT NULL,
-  longitude REAL NOT NULL,
-  area TEXT,
-  address TEXT,
-  category TEXT,
-  ai_description TEXT,
-  severity TEXT,
-  confidence REAL,
-  image_assessment TEXT,
-  priority TEXT,
-  department TEXT,
-  recommended_action TEXT,
-  priority_explanation TEXT,
-  duplicate_summary TEXT,
-  needs_human_review INTEGER NOT NULL DEFAULT 0,
-  review_reasons TEXT NOT NULL DEFAULT '[]',
-  status TEXT NOT NULL DEFAULT 'submitted',
-  analysis_status TEXT NOT NULL DEFAULT 'pending',
-  ai_mode TEXT,
-  is_demo INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_reports_geo ON reports(latitude, longitude);
-CREATE INDEX IF NOT EXISTS idx_reports_category ON reports(category);
-CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
-CREATE INDEX IF NOT EXISTS idx_reports_priority ON reports(priority);
-CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at);
-CREATE INDEX IF NOT EXISTS idx_reports_demo ON reports(is_demo);
+let driver = null; // { name, all, get, run, transaction, close }
+let initPromise = null;
+const txStore = new AsyncLocalStorage();
 
-CREATE TABLE IF NOT EXISTS report_images (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
-  filename TEXT NOT NULL,
-  original_name TEXT,
-  mime_type TEXT NOT NULL,
-  size_bytes INTEGER NOT NULL,
-  width INTEGER,
-  height INTEGER,
-  image_hash TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_images_report ON report_images(report_id);
+export const nowIso = () => new Date().toISOString();
 
-CREATE TABLE IF NOT EXISTS duplicate_links (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
-  candidate_report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
-  distance_m REAL NOT NULL,
-  image_similarity REAL,
-  text_similarity REAL,
-  likelihood TEXT NOT NULL,
-  reason TEXT,
-  status TEXT NOT NULL DEFAULT 'suggested',
-  review_note TEXT,
-  reviewed_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
-  UNIQUE(report_id, candidate_report_id)
-);
-CREATE INDEX IF NOT EXISTS idx_dup_report ON duplicate_links(report_id);
-CREATE INDEX IF NOT EXISTS idx_dup_candidate ON duplicate_links(candidate_report_id);
-CREATE INDEX IF NOT EXISTS idx_dup_status ON duplicate_links(status);
-
-CREATE TABLE IF NOT EXISTS agent_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  report_id INTEGER REFERENCES reports(id) ON DELETE CASCADE,
-  status TEXT NOT NULL DEFAULT 'running',
-  ai_mode TEXT NOT NULL,
-  model TEXT,
-  started_at TEXT NOT NULL,
-  completed_at TEXT,
-  duration_ms INTEGER,
-  error TEXT,
-  final_decision TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_runs_report ON agent_runs(report_id);
-CREATE INDEX IF NOT EXISTS idx_runs_started ON agent_runs(started_at);
-
-CREATE TABLE IF NOT EXISTS agent_steps (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id INTEGER NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-  agent TEXT NOT NULL,
-  step TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'info',
-  message TEXT NOT NULL,
-  data TEXT,
-  duration_ms INTEGER,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_steps_run ON agent_steps(run_id);
-
-CREATE TABLE IF NOT EXISTS agent_results (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  run_id INTEGER NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
-  report_id INTEGER REFERENCES reports(id) ON DELETE CASCADE,
-  agent TEXT NOT NULL,
-  output TEXT NOT NULL,
-  valid INTEGER NOT NULL DEFAULT 1,
-  validation_errors TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_results_report ON agent_results(report_id);
-
-CREATE TABLE IF NOT EXISTS status_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
-  from_status TEXT,
-  to_status TEXT NOT NULL,
-  note TEXT,
-  changed_by TEXT NOT NULL DEFAULT 'system',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_history_report ON status_history(report_id);
-
-CREATE TABLE IF NOT EXISTS admin_notes (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  report_id INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
-  note TEXT NOT NULL,
-  author TEXT NOT NULL DEFAULT 'admin',
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_notes_report ON admin_notes(report_id);
-
-CREATE TABLE IF NOT EXISTS contact_messages (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL,
-  subject TEXT NOT NULL,
-  message TEXT NOT NULL,
-  delivery_status TEXT NOT NULL DEFAULT 'stored',
-  read_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-);
-CREATE INDEX IF NOT EXISTS idx_contact_created ON contact_messages(created_at);
-`;
-
-/** Small additive migrations for databases created by earlier versions. */
-function migrate(d) {
-  const cols = d.prepare('PRAGMA table_info(contact_messages)').all().map((c) => c.name);
-  if (!cols.includes('read_at')) d.exec('ALTER TABLE contact_messages ADD COLUMN read_at TEXT');
-}
-
-let db = null;
-
-export function openDatabase(dbPath = config.databasePath) {
-  if (db) return db;
-  const target = dbPath === ':memory:' || dbPath.endsWith(':memory:') ? ':memory:' : dbPath;
-  if (target !== ':memory:') fs.mkdirSync(path.dirname(target), { recursive: true });
-  db = new DatabaseSync(target);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
-  db.exec(SCHEMA);
-  migrate(db);
-  return db;
-}
-
-export function getDb() {
-  return db || openDatabase();
-}
-
-export function closeDatabase() {
-  if (db) {
-    db.close();
-    db = null;
-  }
-}
-
-/** Run fn inside a transaction (node:sqlite has no helper). */
-export function transaction(fn) {
-  const d = getDb();
-  d.exec('BEGIN');
-  try {
-    const result = fn(d);
-    d.exec('COMMIT');
-    return result;
-  } catch (err) {
-    d.exec('ROLLBACK');
-    throw err;
-  }
-}
-
-/** node:sqlite rejects undefined; normalise params. */
+/** Normalise params: undefined → null, booleans → 0/1. */
 export function clean(params) {
+  if (Array.isArray(params)) return params.map((v) => (v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v));
   const out = {};
-  for (const [k, v] of Object.entries(params)) {
-    if (v === undefined) out[k] = null;
-    else if (typeof v === 'boolean') out[k] = v ? 1 : 0;
-    else out[k] = v;
-  }
+  for (const [k, v] of Object.entries(params || {})) out[k] = v === undefined ? null : typeof v === 'boolean' ? (v ? 1 : 0) : v;
   return out;
 }
 
-export const nowIso = () => new Date().toISOString();
+export function resolveClient() {
+  const forced = (process.env.DB_CLIENT || '').toLowerCase();
+  if (forced === 'mysql' || forced === 'sqlite') return forced;
+  return process.env.DB_HOST ? 'mysql' : 'sqlite';
+}
+
+// ---------------------------------------------------------------- SQLite
+async function createSqliteDriver() {
+  const { DatabaseSync } = await import('node:sqlite');
+  const dbPath = config.databasePath;
+  const target = dbPath === ':memory:' || dbPath.endsWith(':memory:') ? ':memory:' : dbPath;
+  if (target !== ':memory:') fs.mkdirSync(path.dirname(target), { recursive: true });
+  const db = new DatabaseSync(target);
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;');
+  db.exec(SQLITE_SCHEMA);
+  const cols = db.prepare('PRAGMA table_info(contact_messages)').all().map((c) => c.name);
+  if (!cols.includes('read_at')) db.exec('ALTER TABLE contact_messages ADD COLUMN read_at TEXT');
+
+  const exec = (sql, params, mode) => {
+    const stmt = db.prepare(sql);
+    const p = clean(params);
+    const args = Array.isArray(p) ? p : [p];
+    if (mode === 'all') return stmt.all(...args).map((r) => ({ ...r }));
+    if (mode === 'get') {
+      const row = stmt.get(...args);
+      return row ? { ...row } : undefined;
+    }
+    const info = stmt.run(...args);
+    return { insertId: Number(info.lastInsertRowid), changes: Number(info.changes) };
+  };
+  return {
+    name: 'sqlite',
+    all: async (sql, params) => exec(sql, params, 'all'),
+    get: async (sql, params) => exec(sql, params, 'get'),
+    run: async (sql, params) => exec(sql, params, 'run'),
+    async transaction(fn) {
+      db.exec('BEGIN');
+      try {
+        const result = await fn();
+        db.exec('COMMIT');
+        return result;
+      } catch (err) {
+        db.exec('ROLLBACK');
+        throw err;
+      }
+    },
+    raw: db,
+    close: async () => db.close(),
+  };
+}
+
+// ---------------------------------------------------------------- MySQL
+export function mysqlConfigFromEnv(env = process.env) {
+  const missing = ['DB_HOST', 'DB_NAME', 'DB_USER'].filter((k) => !env[k]);
+  if (missing.length) throw new Error(`MySQL configuration incomplete: missing ${missing.join(', ')}`);
+  return {
+    host: env.DB_HOST,
+    port: Number(env.DB_PORT) || 3306,
+    database: env.DB_NAME,
+    user: env.DB_USER,
+    password: env.DB_PASSWORD || '',
+    connectionLimit: Number(env.DB_POOL_SIZE) || 10,
+    waitForConnections: true,
+    namedPlaceholders: true,
+    decimalNumbers: true, // SUM()/AVG() come back as numbers, like SQLite
+    supportBigNumbers: true,
+    bigNumberStrings: false,
+    dateStrings: true,
+    charset: 'utf8mb4',
+    connectTimeout: 15000,
+    enableKeepAlive: true,
+    ...(env.DB_SSL === 'true' ? { ssl: { rejectUnauthorized: env.DB_SSL_REJECT_UNAUTHORIZED !== 'false' } } : {}),
+  };
+}
+
+async function createMysqlDriver() {
+  const mysql = (await import('mysql2/promise')).default;
+  const pool = mysql.createPool(mysqlConfigFromEnv());
+  // Fail fast with a clear (credential-free) message if the database is unreachable.
+  try {
+    const conn = await pool.getConnection();
+    await conn.ping();
+    conn.release();
+  } catch (err) {
+    await pool.end().catch(() => {});
+    throw new Error(`Cannot connect to MySQL at ${process.env.DB_HOST}:${process.env.DB_PORT || 3306} (${err.code || err.message})`);
+  }
+  for (const ddl of MYSQL_SCHEMA) await pool.query(ddl);
+
+  const executor = () => txStore.getStore() || pool;
+  const q = async (sql, params) => {
+    const [rows] = await executor().query(sql, clean(params));
+    return rows;
+  };
+  return {
+    name: 'mysql',
+    all: async (sql, params) => q(sql, params),
+    get: async (sql, params) => (await q(sql, params))[0],
+    async run(sql, params) {
+      const res = await q(sql, params);
+      return { insertId: Number(res.insertId), changes: Number(res.affectedRows) };
+    },
+    async transaction(fn) {
+      if (txStore.getStore()) return fn(); // already inside a transaction
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+        const result = await txStore.run(conn, fn);
+        await conn.commit();
+        return result;
+      } catch (err) {
+        await conn.rollback().catch(() => {});
+        throw err;
+      } finally {
+        conn.release();
+      }
+    },
+    pool,
+    close: async () => pool.end(),
+  };
+}
+
+// ---------------------------------------------------------------- public API
+/** Initialise the configured driver once (idempotent). */
+export function initDatabase() {
+  if (!initPromise) {
+    initPromise = (resolveClient() === 'mysql' ? createMysqlDriver() : createSqliteDriver())
+      .then((d) => (driver = d))
+      .catch((err) => {
+        initPromise = null; // allow a later retry
+        throw err;
+      });
+  }
+  return initPromise;
+}
+
+const ready = async () => driver || initDatabase();
+
+export const dialect = () => driver?.name || resolveClient();
+export const all = async (sql, params) => (await ready()).all(sql, params);
+export const get = async (sql, params) => (await ready()).get(sql, params);
+export const run = async (sql, params) => (await ready()).run(sql, params);
+export const transaction = async (fn) => (await ready()).transaction(fn);
+
+export async function closeDatabase() {
+  const d = driver;
+  driver = null;
+  initPromise = null;
+  if (d) await d.close();
+}
+
+/** Raw driver handle (tests and maintenance scripts only). */
+export const rawDriver = async () => ready();

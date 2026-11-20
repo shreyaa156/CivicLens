@@ -22,7 +22,7 @@ if (!config.gemini.apiKey) {
 console.log('GEMINI_API_KEY: present (value not shown)');
 
 const sharp = (await import('sharp')).default;
-const { openDatabase, closeDatabase } = await import('../src/db/index.js');
+const { initDatabase, closeDatabase } = await import('../src/db/index.js');
 const { createReport, addImage, getReportRow } = await import('../src/models/reportModel.js');
 const { processUpload, saveImage } = await import('../src/services/imageService.js');
 const { createGeminiClient } = await import('../src/ai/modelClient.js');
@@ -37,19 +37,20 @@ const buffer = imgPath
       .jpeg()
       .toBuffer();
 
-openDatabase();
+process.env.DB_CLIENT = process.env.DB_CLIENT || 'sqlite'; // smoke test uses a throwaway SQLite DB
+await initDatabase();
 const processed = await processUpload({ buffer, originalname: imgPath ? path.basename(imgPath) : 'synthetic.jpg' });
 const filename = await saveImage(processed);
-const id = createReport({ citizenDescription: desc, latitude: 20.0076, longitude: 73.763 });
-addImage(id, { ...processed, filename });
+const id = await createReport({ citizenDescription: desc, latitude: 20.0076, longitude: 73.763 });
+await addImage(id, { ...processed, filename });
 
 console.log(`Running live Gemini agents with model ${config.gemini.model} …`);
 const t0 = Date.now();
 const outcome = await processReport(id, { client: createGeminiClient() });
-const run = getRun(outcome.runId);
-const report = getReportRow(id);
+const run = await getRun(outcome.runId);
+const report = await getReportRow(id);
 for (const s of run.steps) console.log(`  [${s.agent.padEnd(12)}] ${s.status.padEnd(7)} ${s.message}`);
 console.log('\nResult:', JSON.stringify({ status: outcome.status, category: report.category, severity: report.severity, confidence: report.confidence, priority: report.priority, department: report.department }, null, 2));
 console.log(`Elapsed ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-closeDatabase();
+await closeDatabase();
 process.exit(outcome.status === 'completed' ? 0 : 1);

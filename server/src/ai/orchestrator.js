@@ -2,7 +2,7 @@ import { config } from '../config/index.js';
 import { CATEGORY_DEFAULT_DEPARTMENT, PRIORITIES } from '../config/domain.js';
 import { getReportRow, getImages, updateReport, getImageHashes } from '../models/reportModel.js';
 import { upsertDuplicateLink } from '../models/duplicateModel.js';
-import { createRun, addStep, finishRun, saveResult } from '../models/agentModel.js';
+import { createRun, createStepLogger, finishRun, saveResult } from '../models/agentModel.js';
 import { readImageBase64, hashSimilarity } from '../services/imageService.js';
 import { haversineMeters } from '../services/geo.js';
 import { jaccard } from '../services/textSimilarity.js';
@@ -23,16 +23,16 @@ export function processReport(reportId, options = {}) {
 }
 
 /** Create the run record up-front so the API can return a run id for live progress. */
-export function startRun(reportId, client = createModelClient()) {
-  const runId = createRun({ reportId, aiMode: client.mode, model: client.model });
+export async function startRun(reportId, client = createModelClient()) {
+  const runId = await createRun({ reportId, aiMode: client.mode, model: client.model });
   return { runId, client };
 }
 
 async function orchestrate(reportId, { client, runId } = {}) {
   client = client || createModelClient();
-  runId = runId || createRun({ reportId, aiMode: client.mode, model: client.model });
-  const log = (entry) => addStep(runId, entry);
-  const report = getReportRow(reportId);
+  runId = runId || (await createRun({ reportId, aiMode: client.mode, model: client.model }));
+  const log = createStepLogger(runId);
+  const report = await getReportRow(reportId);
 
   log({
     agent: ORCH,
@@ -41,10 +41,10 @@ async function orchestrate(reportId, { client, runId } = {}) {
     message: `Workflow started for report ${report.reference} (${client.mode === 'gemini' ? `Google Gemini · ${client.model}` : 'DEVELOPMENT MODE — sample responses, not Gemini'})`,
     data: { report_id: reportId, ai_mode: client.mode, model: client.model },
   });
-  updateReport(reportId, { analysis_status: 'processing', ai_mode: client.mode });
+  await updateReport(reportId, { analysis_status: 'processing', ai_mode: client.mode });
 
   // ---------- Agent 1 ----------
-  const image = getImages(reportId)[0];
+  const image = (await getImages(reportId))[0];
   let a1;
   try {
     if (!image) throw new Error('Report has no image');
@@ -70,10 +70,10 @@ async function orchestrate(reportId, { client, runId } = {}) {
   });
 
   // ---------- Validate Agent 1 duplicates against real DB evidence ----------
-  const duplicateEvidence = buildDuplicateEvidence(report, image, a1, log);
-  saveResult(runId, reportId, A1, { ...findings, duplicates: duplicateEvidence.candidates }, duplicateEvidence.droppedIds.length ? [`Dropped unverifiable duplicate ids: ${duplicateEvidence.droppedIds.join(', ')}`] : null);
+  const duplicateEvidence = await buildDuplicateEvidence(report, image, a1, log);
+  await saveResult(runId, reportId, A1, { ...findings, duplicates: duplicateEvidence.candidates }, duplicateEvidence.droppedIds.length ? [`Dropped unverifiable duplicate ids: ${duplicateEvidence.droppedIds.join(', ')}`] : null);
   for (const d of duplicateEvidence.candidates.filter((c) => c.likelihood !== 'unlikely')) {
-    upsertDuplicateLink({
+    await upsertDuplicateLink({
       reportId,
       candidateId: d.report_id,
       distanceM: d.distance_m,
@@ -92,7 +92,7 @@ async function orchestrate(reportId, { client, runId } = {}) {
   });
 
   // Persist Agent 1 results immediately so they survive an Agent 2 failure.
-  updateReport(reportId, {
+  await updateReport(reportId, {
     category: findings.category,
     ai_description: findings.description,
     severity: findings.severity,
@@ -124,7 +124,7 @@ async function orchestrate(reportId, { client, runId } = {}) {
     return partialWorkflow({ runId, reportId, log, findings, err, model: client.model });
   }
   const { assessment } = a2;
-  saveResult(runId, reportId, A2, assessment);
+  await saveResult(runId, reportId, A2, assessment);
   log({ agent: A2, step: 'priority_assigned', status: 'success', message: `Priority assigned: ${assessment.priority} (safety risk: ${assessment.safety_risk})`, data: { priority: assessment.priority, urgent: assessment.urgent } });
   log({ agent: A2, step: 'department_recommended', status: 'success', message: `Department recommended: ${assessment.department}` });
   log({ agent: A2, step: 'action_suggested', status: 'success', message: `Next action suggested: ${assessment.recommended_action}` });
@@ -132,7 +132,7 @@ async function orchestrate(reportId, { client, runId } = {}) {
   // ---------- Orchestrator validation & guardrails ----------
   const decision = applyGuardrails(findings, assessment, duplicateEvidence, log);
 
-  updateReport(reportId, {
+  await updateReport(reportId, {
     priority: decision.priority,
     department: decision.department,
     recommended_action: decision.recommended_action,
@@ -149,7 +149,8 @@ async function orchestrate(reportId, { client, runId } = {}) {
     message: `Final decision: ${decision.priority} priority → ${decision.department}${decision.needs_human_review ? ' · flagged for human review' : ''}`,
     data: decision,
   });
-  finishRun(runId, { model: client.model, status: 'completed', finalDecision: decision });
+  await log.flush();
+  await finishRun(runId, { model: client.model, status: 'completed', finalDecision: decision });
   return { runId, status: 'completed', decision };
 }
 
@@ -167,9 +168,9 @@ async function attemptAgent(agent, log, fn) {
 }
 
 /** Cross-check Agent 1's duplicate claims against what the tools actually retrieved; attach backend metrics. */
-export function buildDuplicateEvidence(report, image, a1, log) {
+export async function buildDuplicateEvidence(report, image, a1, log) {
   const retrievedById = new Map(a1.retrieved.map((r) => [r.id, r]));
-  const hashes = getImageHashes([...retrievedById.keys()]);
+  const hashes = await getImageHashes([...retrievedById.keys()]);
   const droppedIds = [];
   const candidates = [];
   for (const d of a1.findings.duplicates) {
@@ -253,20 +254,21 @@ export function applyGuardrails(findings, assessment, duplicateEvidence, log) {
   };
 }
 
-function failWorkflow({ runId, reportId, log, stage, err, model }) {
+async function failWorkflow({ runId, reportId, log, stage, err, model }) {
   const message = `${stage === A1 ? A1_NAME : A2_NAME} failed: ${err.message}`;
   log({ agent: ORCH, step: 'workflow_failed', status: 'error', message: `${message}. Report saved and queued for manual review.` });
-  updateReport(reportId, {
+  await updateReport(reportId, {
     analysis_status: 'failed',
     needs_human_review: 1,
     review_reasons: ['Automated AI analysis failed — manual triage required'],
   });
-  finishRun(runId, { model, status: 'failed', error: message.slice(0, 500) });
+  await log.flush();
+  await finishRun(runId, { model, status: 'failed', error: message.slice(0, 500) });
   return { runId, status: 'failed', error: message };
 }
 
 /** Agent 2 failed: keep Agent 1 results, apply transparent rule-based routing, require human review. */
-function partialWorkflow({ runId, reportId, log, findings, err, model }) {
+async function partialWorkflow({ runId, reportId, log, findings, err, model }) {
   const department = CATEGORY_DEFAULT_DEPARTMENT[findings.category] || 'Other';
   const decision = {
     priority: null,
@@ -277,7 +279,7 @@ function partialWorkflow({ runId, reportId, log, findings, err, model }) {
     review_reasons: ['Prioritisation agent failed — manual priority assignment required'],
   };
   log({ agent: ORCH, step: 'fallback', status: 'warning', message: `Agent 2 failed; applied rule-based department routing (${department}) and flagged for human review` });
-  updateReport(reportId, {
+  await updateReport(reportId, {
     department,
     recommended_action: decision.recommended_action,
     priority_explanation: decision.explanation,
@@ -285,6 +287,7 @@ function partialWorkflow({ runId, reportId, log, findings, err, model }) {
     review_reasons: decision.review_reasons,
     analysis_status: 'partial',
   });
-  finishRun(runId, { model, status: 'partial', error: err.message.slice(0, 500), finalDecision: decision });
+  await log.flush();
+  await finishRun(runId, { model, status: 'partial', error: err.message.slice(0, 500), finalDecision: decision });
   return { runId, status: 'partial', decision };
 }

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { CATEGORIES, CATEGORY_LABELS, DEPARTMENT_NAMES, PRIORITIES, STATUSES, OPEN_STATUSES } from '../config/domain.js';
-import { getDb } from '../db/index.js';
+import { all, get, dialect } from '../db/index.js';
 import { config } from '../config/index.js';
 import { AppError } from '../middleware/errors.js';
 import { sanitiseText } from '../middleware/security.js';
@@ -8,8 +8,13 @@ import { describeAiMode } from '../ai/modelClient.js';
 import { getRun, listRuns } from '../models/agentModel.js';
 import * as Messages from '../models/contactModel.js';
 
-export function health(req, res) {
-  res.json({ status: 'ok', time: new Date().toISOString() });
+export async function health(req, res) {
+  try {
+    await get('SELECT 1 AS ok');
+    res.json({ status: 'ok', database: dialect(), time: new Date().toISOString() });
+  } catch {
+    res.status(503).json({ status: 'error', database: dialect(), message: 'Database unavailable' });
+  }
 }
 
 export function publicConfig(req, res) {
@@ -27,24 +32,26 @@ export function publicConfig(req, res) {
 }
 
 /** Public, live figures for the citizen-facing site. Computed from genuine reports only. */
-export function publicStats(req, res) {
-  const db = getDb();
+export async function publicStats(req, res) {
   const open = OPEN_STATUSES.map((s) => `'${s}'`).join(',');
-  const one = (sql, ...p) => db.prepare(sql).get(...p);
-  const totals = one(`SELECT COUNT(*) total,
-      SUM(status IN (${open})) open,
-      SUM(status = 'resolved') resolved,
-      SUM(status IN (${open}) AND priority = 'Critical') critical_open,
-      SUM(status IN (${open}) AND priority = 'High') high_open,
-      SUM(created_at >= ?) last_7_days,
-      COUNT(DISTINCT area) areas
-    FROM reports WHERE is_demo = 0`, new Date(Date.now() - 7 * 86400000).toISOString());
-  const duplicates = one(`SELECT COUNT(*) c FROM duplicate_links d JOIN reports r ON r.id = d.report_id WHERE r.is_demo = 0 AND d.status != 'rejected'`).c;
-  const runs = one(`SELECT COUNT(*) c, AVG(a.duration_ms) avg_ms FROM agent_runs a JOIN reports r ON r.id = a.report_id WHERE r.is_demo = 0 AND a.status = 'completed'`);
-  const topCategories = db
-    .prepare(`SELECT category, COUNT(*) count FROM reports WHERE is_demo = 0 AND category IS NOT NULL GROUP BY category ORDER BY count DESC LIMIT 3`)
-    .all();
-  const latest = one(`SELECT a.id run_id, a.model, a.ai_mode, a.completed_at, a.final_decision, r.id report_id, r.reference, r.category, r.area
+  const n = (v) => Number(v) || 0;
+  const totals = await get(
+    `SELECT COUNT(*) AS total,
+      SUM(CASE WHEN status IN (${open}) THEN 1 ELSE 0 END) AS open_count,
+      SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) AS resolved,
+      SUM(CASE WHEN status IN (${open}) AND priority = 'Critical' THEN 1 ELSE 0 END) AS critical_open,
+      SUM(CASE WHEN status IN (${open}) AND priority = 'High' THEN 1 ELSE 0 END) AS high_open,
+      SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS last_7_days,
+      COUNT(DISTINCT area) AS areas
+    FROM reports WHERE is_demo = 0`,
+    [new Date(Date.now() - 7 * 86400000).toISOString()],
+  );
+  const duplicates = (await get(`SELECT COUNT(*) AS c FROM duplicate_links d JOIN reports r ON r.id = d.report_id WHERE r.is_demo = 0 AND d.status != 'rejected'`)).c;
+  const runs = await get(`SELECT COUNT(*) AS c, AVG(a.duration_ms) AS avg_ms FROM agent_runs a JOIN reports r ON r.id = a.report_id WHERE r.is_demo = 0 AND a.status = 'completed'`);
+  const topCategories = (
+    await all(`SELECT category, COUNT(*) AS count FROM reports WHERE is_demo = 0 AND category IS NOT NULL GROUP BY category ORDER BY count DESC LIMIT 3`)
+  ).map((r) => ({ ...r, count: n(r.count) }));
+  const latest = await get(`SELECT a.id AS run_id, a.model, a.ai_mode, a.completed_at, a.final_decision, r.id AS report_id, r.reference, r.category, r.area
     FROM agent_runs a JOIN reports r ON r.id = a.report_id WHERE r.is_demo = 0 AND a.status = 'completed' ORDER BY a.id DESC LIMIT 1`);
   let latestDecision = null;
   if (latest) {
@@ -57,21 +64,21 @@ export function publicStats(req, res) {
   }
   res.json({
     totals: {
-      total: totals.total || 0, open: totals.open || 0, resolved: totals.resolved || 0, critical_open: totals.critical_open || 0,
-      high_open: totals.high_open || 0, last_7_days: totals.last_7_days || 0, areas: totals.areas || 0, duplicates_detected: duplicates,
+      total: n(totals.total), open: n(totals.open_count), resolved: n(totals.resolved), critical_open: n(totals.critical_open),
+      high_open: n(totals.high_open), last_7_days: n(totals.last_7_days), areas: n(totals.areas), duplicates_detected: n(duplicates),
     },
-    agentRuns: { completed: runs.c, avg_seconds: runs.avg_ms ? Math.round(runs.avg_ms / 100) / 10 : null },
+    agentRuns: { completed: n(runs.c), avg_seconds: runs.avg_ms ? Math.round(runs.avg_ms / 100) / 10 : null },
     topCategories,
     latestDecision,
   });
 }
 
-export function listAgentRuns(req, res) {
-  res.json({ runs: listRuns({ limit: req.query.limit }), ai: describeAiMode() });
+export async function listAgentRuns(req, res) {
+  res.json({ runs: await listRuns({ limit: req.query.limit }), ai: describeAiMode() });
 }
 
-export function getAgentRun(req, res) {
-  const run = getRun(Number(req.params.id));
+export async function getAgentRun(req, res) {
+  const run = await getRun(Number(req.params.id));
   if (!run) throw new AppError(404, 'NOT_FOUND', 'Agent run not found.');
   res.json({ run });
 }
@@ -84,7 +91,7 @@ const contactSchema = z.object({
   website: z.string().max(0, 'Invalid submission').optional(), // honeypot
 });
 
-export function submitContact(req, res) {
+export async function submitContact(req, res) {
   const parsed = contactSchema.parse(req.body || {});
   const data = {
     name: sanitiseText(parsed.name, 100),
@@ -93,31 +100,31 @@ export function submitContact(req, res) {
     message: sanitiseText(parsed.message, 5000),
   };
   // Stored for the admin portal's Messages inbox (no email is sent).
-  const id = Messages.saveContactMessage(data);
+  const id = await Messages.saveContactMessage(data);
   res.status(201).json({ id, received: true });
 }
 
 // ---------- Admin: Messages inbox ----------
 
-export function listMessages(req, res) {
+export async function listMessages(req, res) {
   const filter = ['all', 'unread', 'read'].includes(req.query.filter) ? req.query.filter : 'all';
-  res.json({ messages: Messages.listMessages({ filter }), counts: Messages.messageCounts() });
+  res.json({ messages: await Messages.listMessages({ filter }), counts: await Messages.messageCounts() });
 }
 
-function requireMessage(id) {
-  const msg = Messages.getMessage(Number(id));
+async function requireMessage(id) {
+  const msg = await Messages.getMessage(Number(id));
   if (!msg) throw new AppError(404, 'NOT_FOUND', 'Message not found.');
   return msg;
 }
 
-export function updateMessage(req, res) {
-  const msg = requireMessage(req.params.id);
+export async function updateMessage(req, res) {
+  const msg = await requireMessage(req.params.id);
   const { read } = z.object({ read: z.boolean() }).parse(req.body || {});
-  res.json({ message: Messages.setMessageRead(msg.id, read), counts: Messages.messageCounts() });
+  res.json({ message: await Messages.setMessageRead(msg.id, read), counts: await Messages.messageCounts() });
 }
 
-export function removeMessage(req, res) {
-  const msg = requireMessage(req.params.id);
-  Messages.deleteMessage(msg.id);
-  res.json({ deleted: true, counts: Messages.messageCounts() });
+export async function removeMessage(req, res) {
+  const msg = await requireMessage(req.params.id);
+  await Messages.deleteMessage(msg.id);
+  res.json({ deleted: true, counts: await Messages.messageCounts() });
 }

@@ -45,7 +45,7 @@ describe('Resilience', () => {
     const models = failingModels();
     const client = createGeminiClient({ models, model: 'gemini-test', retryDelayMs: 1 });
     const a = await submit(client, 30.0, 70.0);
-    const aRun = getRun(a.body.runId);
+    const aRun = await getRun(a.body.runId);
     const retries = aRun.steps.filter((s) => s.step === 'model_retry').length;
 
     const healthy = mockGemini({ findings: baseFindings(), assessment: baseAssessment() });
@@ -79,7 +79,7 @@ describe('Resilience', () => {
     };
     const client = createGeminiClient({ models, model: 'primary-model', fallbackModels: ['fallback-model'], retryDelayMs: 1 });
     const res = await submit(client, 34, 74);
-    const run = getRun(res.body.runId);
+    const run = await getRun(res.body.runId);
     const fb = run.steps.filter((s) => s.step === 'model_fallback');
     const primaryCalls = seen.filter((m) => m === 'primary-model').length;
     r.actual = `run=${run.status}, recorded model=${run.model}, fallback events=${fb.length} ("${fb[0]?.message}"), primary attempts=${primaryCalls}, category=${res.body.report.category}`;
@@ -122,7 +122,7 @@ describe('Resilience', () => {
       },
     });
     const a = await submit(badAgent2, 32, 72);
-    const aRun = getRun(a.body.runId);
+    const aRun = await getRun(a.body.runId);
     const validationFails = aRun.steps.filter((s) => s.step === 'validation_failed').length;
 
     let early = true;
@@ -138,7 +138,7 @@ describe('Resilience', () => {
       },
     });
     const b = await submit(eager, 33, 73);
-    const bRun = getRun(b.body.runId);
+    const bRun = await getRun(b.body.runId);
     const guard = bRun.steps.find((s) => s.step === 'guardrail');
 
     r.actual = `(a) run=${aRun.status}, analysis=${a.body.report.analysis_status}, category=${a.body.report.category}, department=${a.body.report.department}, priority=${a.body.report.priority}, review=${a.body.report.needs_human_review}, validation failures=${validationFails} (b) guardrail="${guard?.message}", run=${bRun.status}`;

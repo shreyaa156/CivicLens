@@ -135,7 +135,7 @@ CivicLens/
 │       ├── pages/             Landing, ReportIssue, MapPage, Dashboard, ReportDetail, AgentActivity, Contact, Messages
 │       ├── components/        Layout, AgentWorkflow, AnalysisPanel, ClusterLayer, LocationPicker, AdminGate, ui
 │       └── lib/               api (axios), constants, leaflet helpers, AppContext
-├── server/                    Express 5 + node:sqlite
+├── server/                    Express 5 + MySQL (production) / node:sqlite (local)
 │   ├── src/
 │   │   ├── ai/                modelClient (Gemini + retries), agentRunner, schemas, devModel,
 │   │   │   ├── agents/        issueIntelligenceAgent.js, actionPrioritisationAgent.js
@@ -149,6 +149,8 @@ CivicLens/
 ├── docs/TEST_REPORT.md        Generated scenario report
 └── .env.example
 ```
+
+**Database:** MySQL in production (GoDaddy Hosted MySQL, via `mysql2/promise` and the injected `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`); a local SQLite file when `DB_HOST` is not set (development and tests). Tables are created automatically on startup. To copy existing SQLite data into MySQL: `npm run db:migrate` (dry run) then `npm run db:migrate -- --apply`. The SQLite file is opened read-only and never changed; existing rows are skipped, so it is safe to re-run.
 
 **Database tables:** `reports`, `report_images`, `duplicate_links`, `agent_runs`, `agent_steps` (execution records), `agent_results` (structured analysis outputs), `status_history`, `admin_notes`, `contact_messages`. All are indexed on their lookup columns.
 
@@ -190,7 +192,8 @@ Everything is documented in [`.env.example`](.env.example). The values you'll mo
 | `ADMIN_TOKEN` | – | Required in production for admin features |
 | `PORT` | `4000` | Server port |
 | `CORS_ORIGINS` | Vite dev origins | Extra allowed browser origins |
-| `DATABASE_PATH` / `UPLOAD_DIR` | `server/data/…` | Persistent storage locations |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | – | MySQL connection (injected by GoDaddy). If unset, SQLite is used |
+| `DATABASE_PATH` / `UPLOAD_DIR` | `server/data/…` | Local SQLite file / uploaded photos folder |
 | `DUPLICATE_RADIUS_METERS` | `75` | Suggested duplicate search radius |
 | `REVIEW_CONFIDENCE_THRESHOLD` | `0.6` | Below this, a report goes to human review |
 | `MAP_TILE_URL` / `MAP_TILE_ATTRIBUTION` / `MAP_TILE_SUBDOMAINS` | OpenStreetMap | Map tile provider; switch without code changes (see `.env.example`) |

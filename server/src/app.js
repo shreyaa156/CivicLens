@@ -4,7 +4,6 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from './config/index.js';
-import { openDatabase } from './db/index.js';
 import { apiLimiter } from './middleware/security.js';
 import { errorHandler, notFound } from './middleware/errors.js';
 import routes from './routes/index.js';
@@ -22,8 +21,7 @@ export function tileImageSources(tileUrl) {
 }
 
 export function createApp() {
-  openDatabase();
-  const app = express();
+  const app = express(); // database connects lazily / via initDatabase() in index.js
   app.disable('x-powered-by');
   if (config.trustProxy) app.set('trust proxy', 1);
 

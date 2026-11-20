@@ -107,16 +107,16 @@ export async function runIssueIntelligenceAgent({ client, input, log }) {
   const tools = {
     search_nearby_reports: {
       declaration: toolDeclarations.search_nearby_reports,
-      handler: ({ radius_m, category }) => {
+      handler: async ({ radius_m, category }) => {
         const radius = Math.min(Math.max(Number(radius_m) || config.duplicates.defaultRadiusMeters, 10), config.duplicates.maxRadiusMeters);
-        const rows = findNearbyReports({
+        const rows = (await findNearbyReports({
           latitude: report.latitude,
           longitude: report.longitude,
           radiusM: radius,
           excludeId: report.id,
           category: CATEGORIES.includes(category) ? category : undefined,
           lookbackDays: config.duplicates.lookbackDays,
-        }).slice(0, 10);
+        })).slice(0, 10);
         for (const r of rows) retrieved.set(r.id, r);
         return {
           radius_m: radius,
@@ -139,10 +139,10 @@ export async function runIssueIntelligenceAgent({ client, input, log }) {
     },
     compare_candidates: {
       declaration: toolDeclarations.compare_candidates,
-      handler: ({ candidate_ids }) => {
+      handler: async ({ candidate_ids }) => {
         const ids = (Array.isArray(candidate_ids) ? candidate_ids : []).map(Number).filter((id) => retrieved.has(id)).slice(0, 10);
         const rejected = (candidate_ids || []).map(Number).filter((id) => !retrieved.has(id));
-        const hashes = getImageHashes(ids);
+        const hashes = await getImageHashes(ids);
         return {
           comparisons: ids.map((id) => {
             const c = retrieved.get(id);

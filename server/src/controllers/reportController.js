@@ -49,15 +49,15 @@ export async function createReport(req, res) {
 
   let reportId;
   try {
-    reportId = transaction(() => {
-      const id = Reports.createReport({
+    reportId = await transaction(async () => {
+      const id = await Reports.createReport({
         citizenDescription: sanitiseText(input.description, 1000),
         latitude: input.latitude,
         longitude: input.longitude,
         area: geo.area,
         address: geo.address,
       });
-      Reports.addImage(id, { ...processed, filename });
+      await Reports.addImage(id, { ...processed, filename });
       return id;
     });
   } catch (err) {
@@ -65,25 +65,25 @@ export async function createReport(req, res) {
     throw err;
   }
 
-  const { runId, client } = startRun(reportId);
+  const { runId, client } = await startRun(reportId);
   const job = processReport(reportId, { client, runId });
 
   if (req.query.wait === 'true') {
     const outcome = await job;
-    return res.status(201).json({ report: getReportDetail(reportId), runId, outcome });
+    return res.status(201).json({ report: await getReportDetail(reportId), runId, outcome });
   }
   job.catch((err) => console.error('[orchestrator] unhandled', err));
-  res.status(202).json({ report: presentReport(Reports.getReportRow(reportId)), runId });
+  res.status(202).json({ report: presentReport(await Reports.getReportRow(reportId)), runId });
 }
 
-export function getReportDetail(id) {
-  const report = Reports.getReportRow(id);
+export async function getReportDetail(id) {
+  const report = await Reports.getReportRow(id);
   if (!report) return null;
-  const images = Reports.getImages(id).map((i) => ({ ...i, url: imageUrl(i.filename) }));
-  const duplicates = Duplicates.getDuplicatesForReport(id).map((d) => ({ ...d, candidate_image_url: imageUrl(d.candidate_image), candidate_is_demo: !!d.candidate_is_demo }));
-  const duplicatedBy = Duplicates.getReportsDuplicatingThis(id);
-  const history = Reports.getStatusHistory(id);
-  const run = getLatestRunForReport(id);
+  const images = (await Reports.getImages(id)).map((i) => ({ ...i, url: imageUrl(i.filename) }));
+  const duplicates = (await Duplicates.getDuplicatesForReport(id)).map((d) => ({ ...d, candidate_image_url: imageUrl(d.candidate_image), candidate_is_demo: !!d.candidate_is_demo }));
+  const duplicatedBy = await Duplicates.getReportsDuplicatingThis(id);
+  const history = await Reports.getStatusHistory(id);
+  const run = await getLatestRunForReport(id);
   return {
     ...report,
     image_url: images[0]?.url || null,
@@ -105,17 +105,17 @@ const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).optional(),
 });
 
-export function listReports(req, res) {
+export async function listReports(req, res) {
   const f = listSchema.parse(req.query);
-  const reports = Reports.listReports({ ...f, reviewOnly: f.review === 'true' }).map(presentReport);
+  const reports = (await Reports.listReports({ ...f, reviewOnly: f.review === 'true' })).map(presentReport);
   res.json({ reports, count: reports.length });
 }
 
-export function getReport(req, res) {
+export async function getReport(req, res) {
   const id = Number(req.params.id);
-  const detail = Number.isInteger(id) ? getReportDetail(id) : null;
-  const byRef = !detail ? Reports.getReportByRef(String(req.params.id)) : null;
-  const result = detail || (byRef && getReportDetail(byRef.id));
+  const detail = Number.isInteger(id) ? await getReportDetail(id) : null;
+  const byRef = !detail ? await Reports.getReportByRef(String(req.params.id)) : null;
+  const result = detail || (byRef && (await getReportDetail(byRef.id)));
   if (!result) throw new AppError(404, 'NOT_FOUND', 'Report not found.');
   res.json({ report: result });
 }
